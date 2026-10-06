@@ -37,7 +37,9 @@ class FotoApi {
             return ConnectionTask.fromSocket(Future.value(sock), () {});
           } on SocketException catch (e) {
             if (!e.message.contains('Failed host lookup')) rethrow;
-            final ip = await _resolveViaDoh(uri.host);
+            var ip = await _resolveViaDoh(uri.host);
+            // Fallback terakhir: IP Cloudflare hardcoded
+            ip ??= _hardcodedIp(uri.host);
             if (ip == null) rethrow;
             final sock = await connect(ip);
             return ConnectionTask.fromSocket(Future.value(sock), () {});
@@ -61,18 +63,43 @@ class FotoApi {
     return dio;
   }
 
-  /// Resolve domain via DNS-over-HTTPS (bypass DNS HP yang bermasalah).
+  /// IP fallback kalau DoH pun diblokir (diupdate berkala).
+  String? _hardcodedIp(String host) {
+    if (host == 'ambilfile.web.id') {
+      return '104.21.41.71'; // Cloudflare, cek berkala via DoH
+    }
+    return null;
+  }
+
+  /// Resolve domain via DNS-over-HTTPS ke IP 1.1.1.1 LANGSUNG
+  /// (tanpa butuh DNS sistem sama sekali).
   Future<String?> _resolveViaDoh(String host) async {
     try {
       final c = HttpClient();
-      final req = await c.getUrl(Uri.parse(
-          'https://cloudflare-dns.com/dns-query?name=$host&type=A'));
-      req.headers.set('accept', 'application/dns-json');
-      final resp = await req.close().timeout(
+      // Konek ke 1.1.1.1, tapi SNI + validasi cert untuk cloudflare-dns.com
+      c.badCertificateCallback = (cert, h, port) {
+        return cert.subject.toLowerCase().contains('cloudflare');
+      };
+      final sock = await Socket.connect('1.1.1.1', 443,
+          timeout: const Duration(seconds: 10));
+      final secure = await SecureSocket.secure(sock,
+          host: 'cloudflare-dns.com',
+          onBadCertificate: (cert) => cert.subject
+              .toLowerCase()
+              .contains('cloudflare'));
+      final reqStr = 'GET /dns-query?name=$host&type=A HTTP/1.1\r\n'
+          'Host: cloudflare-dns.com\r\n'
+          'accept: application/dns-json\r\n'
+          'Connection: close\r\n\r\n';
+      secure.write(reqStr);
+      final body = await utf8.decoder.bind(secure).join().timeout(
           const Duration(seconds: 10));
-      final body = await resp.transform(utf8.decoder).join();
+      secure.destroy();
       c.close();
-      final j = jsonDecode(body) as Map<String, dynamic>;
+      final jsonStart = body.indexOf('{');
+      if (jsonStart < 0) return null;
+      final j =
+          jsonDecode(body.substring(jsonStart)) as Map<String, dynamic>;
       final ans = j['Answer'] as List?;
       if (ans != null && ans.isNotEmpty) {
         return (ans[0] as Map)['data']?.toString();
