@@ -7,6 +7,9 @@ import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 import 'api.dart';
+import 'room.dart';
+import 'package:qr_flutter/qr_flutter.dart';
+import 'package:flutter/services.dart';
 import 'processor.dart';
 
 const brand = Color(0xFFF6821F);
@@ -15,6 +18,7 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await FotoApi.instance.init();
   await FotoProcessor.instance.init();
+  await RoomManager.instance.init();
   runApp(const MyApp());
 }
 
@@ -275,18 +279,45 @@ class _WatchScreenState extends State<WatchScreen> {
           ev is FileSystemModifyEvent) {
         final p = ev.path;
         if (_seen.contains(p)) return;
+        final name = p.split(Platform.pathSeparator).last;
+        // skip file temp kamera Android (.pending-*) & file hidden
+        if (name.startsWith('.pending-') || name.startsWith('.')) return;
         final low = p.toLowerCase();
         if (!(low.endsWith('.jpg') ||
             low.endsWith('.jpeg') ||
             low.endsWith('.png'))) return;
-        Future.delayed(const Duration(seconds: 2), () {
-          if (_seen.contains(p)) return;
-          _seen.add(p);
-          widget.onDetected(p);
-        });
+        // tunggu file stabil (selesai ditulis) via cek ukuran
+        _waitStable(p);
       }
     });
     setState(() => _watching = true);
+  }
+
+  /// Tunggu sampai ukuran file stabil 2x cek (kamera selesai nulis).
+  Future<void> _waitStable(String p) async {
+    try {
+      var lastSize = -1;
+      var stableCount = 0;
+      for (var i = 0; i < 15; i++) {
+        await Future.delayed(const Duration(seconds: 1));
+        final f = File(p);
+        if (!await f.exists()) return; // file hilang (temp)
+        final sz = await f.length();
+        if (sz == lastSize && sz > 0) {
+          stableCount++;
+          if (stableCount >= 2) break;
+        } else {
+          stableCount = 0;
+        }
+        lastSize = sz;
+      }
+      if (_seen.contains(p)) return;
+      final f = File(p);
+      if (!await f.exists()) return;
+      if (await f.length() == 0) return;
+      _seen.add(p);
+      widget.onDetected(p);
+    } catch (_) {}
   }
 
   @override
@@ -455,13 +486,16 @@ class QueueScreenState extends State<QueueScreen> {
       if (!FotoApi.instance.hasApiKey) {
         throw StateError('Isi API key dulu di tab Atur.');
       }
+      final rm = RoomManager.instance;
+      if (!rm.hasRoom) {
+        throw StateError(
+            'Buat room dulu (tombol di atas) sebelum upload.');
+      }
+      final roomId = rm.roomId!;
       setState(() {
         job.status = JobStatus.uploading;
-        job.step = 'Membuat room...';
+        job.step = 'Mengupload...';
       });
-      final room =
-          await FotoApi.instance.createRoom(expiryMinutes: 1440);
-      final roomId = room['id'].toString();
       final name = pubPath.split(Platform.pathSeparator).last;
       await FotoApi.instance.uploadFile(roomId, pubPath, name,
           (sent, total) {
@@ -471,10 +505,9 @@ class QueueScreenState extends State<QueueScreen> {
               'Mengupload ${(job.progress * 100).toStringAsFixed(0)}%';
         });
       });
-      final link = await FotoApi.instance.roomLink(roomId);
       setState(() {
         job.status = JobStatus.done;
-        job.shareLink = link;
+        job.shareLink = rm.link;
         job.step = 'Selesai ✅';
       });
     } catch (e) {
@@ -485,12 +518,218 @@ class QueueScreenState extends State<QueueScreen> {
     }
   }
 
+  Future<void> _buatRoom() async {
+    if (!FotoApi.instance.hasApiKey) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Isi API key dulu di tab Atur.')));
+      return;
+    }
+    final minutes = await showModalBottomSheet<int>(
+      context: context,
+      builder: (c) => SafeArea(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          const Padding(
+            padding: EdgeInsets.all(16),
+            child: Text('Masa aktif room',
+                style:
+                    TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+          ),
+          for (final o in [
+            [60, '1 jam'],
+            [720, '12 jam'],
+            [1440, '1 hari'],
+            [10080, '7 hari'],
+          ])
+            ListTile(
+              title: Text(o[1] as String),
+              onTap: () => Navigator.pop(c, o[0] as int),
+            ),
+        ]),
+      ),
+    );
+    if (minutes == null) return;
+    try {
+      await RoomManager.instance.createRoom(minutes);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content:
+              Text('Room dibuat! PIN ${RoomManager.instance.pin}')));
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Gagal: ${FotoApi.apiError(e)}')));
+    }
+  }
+
+  Widget _roomCard() {
+    return ListenableBuilder(
+      listenable: RoomManager.instance,
+      builder: (_, __) {
+        final rm = RoomManager.instance;
+        if (!rm.hasRoom) {
+          return Card(
+            color: Colors.orange.shade50,
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  const Text(
+                    'Belum ada room aktif.\nBuat room dulu biar foto punya tempat upload + QR buat dibagikan.',
+                    style: TextStyle(fontSize: 13),
+                  ),
+                  const SizedBox(height: 12),
+                  ElevatedButton.icon(
+                    style: ElevatedButton.styleFrom(
+                        backgroundColor: brand,
+                        shape: RoundedRectangleBorder(
+                            borderRadius:
+                                BorderRadius.circular(10))),
+                    onPressed: _buatRoom,
+                    icon: const Icon(Icons.add,
+                        color: Colors.white),
+                    label: const Text('Buat Room',
+                        style: TextStyle(color: Colors.white)),
+                  ),
+                ],
+              ),
+            ),
+          );
+        }
+        return Card(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              children: [
+                Row(
+                  children: [
+                    QrImageView(
+                      data: rm.link ?? '',
+                      version: QrVersions.auto,
+                      size: 110,
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment:
+                            CrossAxisAlignment.start,
+                        children: [
+                          const Text('Room Aktif',
+                              style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 15)),
+                          const SizedBox(height: 4),
+                          Row(
+                            children: [
+                              Text('PIN ${rm.pin}',
+                                  style: const TextStyle(
+                                      fontSize: 18,
+                                      fontWeight: FontWeight.w800,
+                                      letterSpacing: 2)),
+                              IconButton(
+                                icon: const Icon(Icons.copy,
+                                    size: 18),
+                                onPressed: () {
+                                  Clipboard.setData(ClipboardData(
+                                      text: rm.pin ?? ''));
+                                  ScaffoldMessenger.of(
+                                          context)
+                                      .showSnackBar(
+                                          const SnackBar(
+                                              content: Text(
+                                                  'PIN disalin')));
+                                },
+                              ),
+                            ],
+                          ),
+                          if ((rm.expiresAt ?? '').isNotEmpty)
+                            Text(
+                                'Aktif sampai ${rm.expiresAt}',
+                                style: const TextStyle(
+                                    fontSize: 11,
+                                    color: Colors.black54)),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(rm.link ?? '',
+                          style: const TextStyle(
+                              fontSize: 11,
+                              color: Colors.black54),
+                          overflow: TextOverflow.ellipsis),
+                    ),
+                    TextButton(
+                      onPressed: () {
+                        Clipboard.setData(
+                            ClipboardData(text: rm.link ?? ''));
+                        ScaffoldMessenger.of(context)
+                            .showSnackBar(const SnackBar(
+                                content:
+                                    Text('Link disalin')));
+                      },
+                      child: const Text('Salin Link'),
+                    ),
+                    TextButton(
+                      onPressed: () async {
+                        final yes = await showDialog<bool>(
+                          context: context,
+                          builder: (c) => AlertDialog(
+                            title:
+                                const Text('Tutup room?'),
+                            content: const Text(
+                                'Foto berikutnya butuh room baru.'),
+                            actions: [
+                              TextButton(
+                                  onPressed: () =>
+                                      Navigator.pop(
+                                          c, false),
+                                  child:
+                                      const Text('Batal')),
+                              FilledButton(
+                                  onPressed: () =>
+                                      Navigator.pop(c, true),
+                                  child:
+                                      const Text('Tutup')),
+                            ],
+                          ),
+                        );
+                        if (yes == true) {
+                          await RoomManager.instance
+                              .clearRoom();
+                        }
+                      },
+                      child: const Text('Tutup',
+                          style:
+                              TextStyle(color: Colors.red)),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Antrian',
           style: TextStyle(fontWeight: FontWeight.bold))),
-      body: _jobs.isEmpty
+      body: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+            child: _roomCard(),
+          ),
+          Expanded(
+            child: _jobs.isEmpty
           ? const Center(
               child: Text('Belum ada foto.\nJepret via Kamera atau aktifkan Pantau Folder.',
                   textAlign: TextAlign.center,
@@ -560,6 +799,9 @@ class QueueScreenState extends State<QueueScreen> {
                 );
               },
             ),
+          ),
+        ],
+      ),
     );
   }
 

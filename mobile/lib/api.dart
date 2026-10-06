@@ -82,7 +82,8 @@ class FotoApi {
       final chunk = file.sublist(start, end);
 
       var ok = false;
-      for (var attempt = 0; attempt < 4 && !ok; attempt++) {
+      DioException? lastErr;
+      for (var attempt = 0; attempt < 6 && !ok; attempt++) {
         try {
           final form = FormData.fromMap({
             'chunk': MultipartFile.fromBytes(chunk, filename: 'chunk'),
@@ -99,10 +100,16 @@ class FotoApi {
               ));
           ok = true;
         } on DioException catch (e) {
+          lastErr = e;
           if (e.response?.statusCode == 413) rethrow;
-          if (attempt == 3) rethrow;
-          await Future.delayed(Duration(seconds: 1 << attempt));
+          if (attempt == 5) break;
+          // backoff: 2, 4, 8, 16, 32 detik
+          await Future.delayed(Duration(seconds: 2 << attempt));
         }
+      }
+      if (!ok) {
+        throw lastErr ??
+            StateError('Upload gagal setelah 6x percobaan');
       }
       sent = end;
       onProgress(sent, total);
@@ -125,6 +132,14 @@ class FotoApi {
       final d = e.response?.data;
       if (d is Map && d['error'] != null) return d['error'].toString();
       if (e.response?.statusCode == 401) return 'API key salah / tidak valid';
+      if (e.type == DioExceptionType.connectionError) {
+        return 'Tidak bisa terhubung ke server. Cek internet lalu coba lagi.';
+      }
+      if (e.type == DioExceptionType.connectionTimeout ||
+          e.type == DioExceptionType.sendTimeout ||
+          e.type == DioExceptionType.receiveTimeout) {
+        return 'Koneksi timeout. Cek internet lalu coba lagi.';
+      }
       return 'Jaringan bermasalah (${e.type.name})';
     }
     if (e is StateError) return e.message;
