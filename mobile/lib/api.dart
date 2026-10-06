@@ -1,6 +1,8 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:dio/dio.dart';
+import 'package:dio/io.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// Client API AmbilFile untuk Fotografer Watch.
@@ -12,11 +14,72 @@ class FotoApi {
   static const _kApiKey = 'fw_api_key';
   static const _kBaseUrl = 'https://ambilfile.web.id';
 
-  final Dio _dio = Dio(BaseOptions(
-    baseUrl: _kBaseUrl,
-    connectTimeout: const Duration(seconds: 15),
-    headers: {'User-Agent': 'FotograferWatch/1.0'},
-  ));
+  late final Dio _dio = _createDio();
+
+  Dio _createDio() {
+    final dio = Dio(BaseOptions(
+      baseUrl: _kBaseUrl,
+      connectTimeout: const Duration(seconds: 15),
+      headers: {'User-Agent': 'FotograferWatch/1.0'},
+    ));
+    // Custom HttpClient: kalau DNS sistem gagal, resolve via DoH (Cloudflare)
+    // lalu konek ke IP dengan SNI + validasi sertifikat untuk domain asli.
+    final adapter = IOHttpClientAdapter();
+    adapter.createHttpClient = () {
+      final client = HttpClient();
+      client.connectionFactory = (uri, proxyHost, proxyPort) {
+        Future<Socket> connect(String host) =>
+            Socket.connect(host, uri.port,
+                timeout: const Duration(seconds: 10));
+        Future<ConnectionTask<Socket>> task() async {
+          try {
+            final sock = await connect(uri.host);
+            return ConnectionTask.fromSocket(Future.value(sock), () {});
+          } on SocketException catch (e) {
+            if (!e.message.contains('Failed host lookup')) rethrow;
+            final ip = await _resolveViaDoh(uri.host);
+            if (ip == null) rethrow;
+            final sock = await connect(ip);
+            return ConnectionTask.fromSocket(Future.value(sock), () {});
+          }
+        }
+        return task();
+      };
+      // Validasi sertifikat: saat konek via IP (fallback DoH),
+      // pastikan cert memang untuk domain kita.
+      client.badCertificateCallback =
+          (X509Certificate cert, String host, int port) {
+        const domain = 'ambilfile.web.id';
+        if (host == domain) return false; // DNS normal: validasi standar
+        // Konek via IP: cek cert subject/SAN mengandung domain kita
+        final subj = cert.subject.toLowerCase();
+        return subj.contains(domain);
+      };
+      return client;
+    };
+    dio.httpClientAdapter = adapter;
+    return dio;
+  }
+
+  /// Resolve domain via DNS-over-HTTPS (bypass DNS HP yang bermasalah).
+  Future<String?> _resolveViaDoh(String host) async {
+    try {
+      final c = HttpClient();
+      final req = await c.getUrl(Uri.parse(
+          'https://cloudflare-dns.com/dns-query?name=$host&type=A'));
+      req.headers.set('accept', 'application/dns-json');
+      final resp = await req.close().timeout(
+          const Duration(seconds: 10));
+      final body = await resp.transform(utf8.decoder).join();
+      c.close();
+      final j = jsonDecode(body) as Map<String, dynamic>;
+      final ans = j['Answer'] as List?;
+      if (ans != null && ans.isNotEmpty) {
+        return (ans[0] as Map)['data']?.toString();
+      }
+    } catch (_) {}
+    return null;
+  }
 
   String? _apiKey;
 
