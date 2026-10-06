@@ -69,7 +69,11 @@ class FotoApi {
             : '';
         return 'API key ditolak server${msg.isNotEmpty ? ': $msg' : ''}';
       }
-      return apiError(e);
+      // detail mentah buat debug
+      final detail = e.message ?? e.error?.toString() ?? '-';
+      return '[${e.type.name}] $detail';
+    } catch (e) {
+      return 'Error: $e';
     }
   }
 
