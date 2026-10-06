@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:camera/camera.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
 
@@ -224,12 +225,32 @@ class _WatchScreenState extends State<WatchScreen> {
   }
 
   Future<void> _loadFolder() async {
-    final w = FotoProcessor.instance.workDir;
-    // default pantau: folder DCIM/Camera di storage yang sama
-    if (w != null) {
-      final parent = Directory(w).parent.path;
-      setState(() => _folder = '$parent/DCIM/Camera');
+    final fp = FotoProcessor.instance;
+    var wd = fp.watchDir;
+    if (wd == null) {
+      // default: DCIM/Camera
+      final w = fp.workDir;
+      if (w != null) {
+        wd = '${Directory(w).parent.path}/DCIM/Camera';
+        await fp.setWatchDir(wd);
+      }
     }
+    setState(() => _folder = wd);
+  }
+
+  Future<void> _pickFolder() async {
+    if (_watching) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Berhentikan pantauan dulu')));
+      return;
+    }
+    final dir = await FilePicker.platform.getDirectoryPath(
+      dialogTitle: 'Pilih folder yang dipantau',
+    );
+    if (dir == null) return;
+    await FotoProcessor.instance.setWatchDir(dir);
+    setState(() => _folder = dir);
+    _seen.clear();
   }
 
   Future<void> _toggle() async {
@@ -300,9 +321,29 @@ class _WatchScreenState extends State<WatchScreen> {
                   color: Colors.white,
                   borderRadius: BorderRadius.circular(10),
                   border: Border.all(color: Colors.black12)),
-              child: Text(_folder ?? '...',
-                  style: const TextStyle(
-                      fontFamily: 'monospace', fontSize: 12)),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(_folder ?? '...',
+                        style: const TextStyle(
+                            fontFamily: 'monospace',
+                            fontSize: 12)),
+                  ),
+                  TextButton.icon(
+                    onPressed: _pickFolder,
+                    icon: const Icon(Icons.folder_open,
+                        size: 18),
+                    label: const Text('Ubah'),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'Kamera bawaan otomatis masuk pipeline.\nKamera eksternal: arahkan penyimpanannya ke folder ini.',
+              textAlign: TextAlign.center,
+              style:
+                  TextStyle(fontSize: 12, color: Colors.black45),
             ),
             const SizedBox(height: 20),
             SizedBox(

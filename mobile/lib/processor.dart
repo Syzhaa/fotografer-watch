@@ -21,6 +21,7 @@ class FotoProcessor {
   static const _kStudio = 'fw_studio';
   static const _kThanks = 'fw_thanks';
   static const _kWmStyle = 'fw_wm_style'; // banner | simple
+  static const _kWatchDir = 'fw_watch_dir';
 
   String? _workDir;
   String _watermark = '';
@@ -30,6 +31,7 @@ class FotoProcessor {
   String _studio = '';
   String _thanks = 'Thanks for coming!';
   String _wmStyle = 'banner';
+  String? _watchDir;
 
   String? get workDir => _workDir;
   String get watermark => _watermark;
@@ -44,6 +46,7 @@ class FotoProcessor {
     _studio = p.getString(_kStudio) ?? '';
     _thanks = p.getString(_kThanks) ?? 'Thanks for coming!';
     _wmStyle = p.getString(_kWmStyle) ?? 'banner';
+    _watchDir = p.getString(_kWatchDir);
     // default: folder AmbilFile/Fotografer di storage
     if (_workDir == null) {
       final ext = await getExternalStorageDirectory();
@@ -80,6 +83,13 @@ class FotoProcessor {
   String get studio => _studio;
   String get thanks => _thanks;
   String get wmStyle => _wmStyle;
+  String? get watchDir => _watchDir;
+
+  Future<void> setWatchDir(String dir) async {
+    _watchDir = dir;
+    final p = await SharedPreferences.getInstance();
+    await p.setString(_kWatchDir, dir);
+  }
 
   Future<void> setBanner(
       {String? couple,
