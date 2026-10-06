@@ -552,13 +552,39 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen> {
   final _apiCtrl = TextEditingController();
   final _wmCtrl = TextEditingController();
+  final _coupleCtrl = TextEditingController();
+  final _dateCtrl = TextEditingController();
+  final _studioCtrl = TextEditingController();
+  final _thanksCtrl = TextEditingController();
   bool _obscure = true;
+  String _wmStyle = 'banner';
 
   @override
   void initState() {
     super.initState();
+    final fp = FotoProcessor.instance;
     _apiCtrl.text = FotoApi.instance.apiKey ?? '';
-    _wmCtrl.text = FotoProcessor.instance.watermark;
+    _wmCtrl.text = fp.watermark;
+    _coupleCtrl.text = fp.couple;
+    _dateCtrl.text = fp.wmDate;
+    _studioCtrl.text = fp.studio;
+    _thanksCtrl.text = fp.thanks;
+    _wmStyle = fp.wmStyle;
+  }
+
+  Widget _wmField(TextEditingController c, String label,
+      String hint) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: TextField(
+        controller: c,
+        decoration: InputDecoration(
+          border: const OutlineInputBorder(),
+          labelText: label,
+          hintText: hint,
+        ),
+      ),
+    );
   }
 
   @override
@@ -616,28 +642,61 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
           ),
           const SizedBox(height: 20),
-          const Text('Watermark (bingkai publik)',
+          const Text('Watermark Banner',
               style:
                   TextStyle(fontWeight: FontWeight.bold)),
+          const SizedBox(height: 4),
+          const Text('Model banner hijau ala undangan di bawah foto.',
+              style:
+                  TextStyle(fontSize: 12, color: Colors.black54)),
           const SizedBox(height: 8),
-          TextField(
-            controller: _wmCtrl,
-            decoration: const InputDecoration(
-              border: OutlineInputBorder(),
-              hintText: 'cth: © Studio Foto',
-            ),
+          Row(
+            children: [
+              ChoiceChip(
+                label: const Text('Banner'),
+                selected: _wmStyle == 'banner',
+                selectedColor: brand.withOpacity(.2),
+                onSelected: (_) =>
+                    setState(() => _wmStyle = 'banner'),
+              ),
+              const SizedBox(width: 8),
+              ChoiceChip(
+                label: const Text('Simple'),
+                selected: _wmStyle == 'simple',
+                selectedColor: brand.withOpacity(.2),
+                onSelected: (_) =>
+                    setState(() => _wmStyle = 'simple'),
+              ),
+            ],
           ),
+          const SizedBox(height: 12),
+          _wmField(_coupleCtrl, 'Nama mempelai', 'cth: Ervaen & Mariatul'),
+          _wmField(_dateCtrl, 'Tanggal', 'cth: 31.05.2026'),
+          _wmField(_studioCtrl, 'Nama studio (kanan)',
+              'cth: aisthetic'),
+          _wmField(_thanksCtrl, 'Teks kiri',
+              'cth: Thanks for coming!'),
+          _wmField(_wmCtrl, 'Watermark simple (mode Simple)',
+              'cth: © Studio Foto'),
           const SizedBox(height: 8),
           SizedBox(
             height: 44,
             child: OutlinedButton(
               onPressed: () async {
+                await FotoProcessor.instance.setBanner(
+                  couple: _coupleCtrl.text.trim(),
+                  date: _dateCtrl.text.trim(),
+                  studio: _studioCtrl.text.trim(),
+                  thanks: _thanksCtrl.text.trim(),
+                  style: _wmStyle,
+                );
                 await FotoProcessor.instance
                     .setWatermark(_wmCtrl.text.trim());
                 if (!mounted) return;
                 ScaffoldMessenger.of(context).showSnackBar(
                     const SnackBar(
-                        content: Text('Watermark disimpan')));
+                        content:
+                            Text('Pengaturan watermark disimpan')));
               },
               child: const Text('Simpan Watermark'),
             ),

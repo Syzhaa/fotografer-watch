@@ -16,10 +16,20 @@ class FotoProcessor {
   static const _kWorkDir = 'fw_work_dir';
   static const _kWatermark = 'fw_watermark';
   static const _kFrameColor = 'fw_frame_color';
+  static const _kCouple = 'fw_couple';
+  static const _kWmDate = 'fw_wm_date';
+  static const _kStudio = 'fw_studio';
+  static const _kThanks = 'fw_thanks';
+  static const _kWmStyle = 'fw_wm_style'; // banner | simple
 
   String? _workDir;
   String _watermark = '';
   int _frameColor = 0xFFFFFFFF; // putih
+  String _couple = '';
+  String _wmDate = '';
+  String _studio = '';
+  String _thanks = 'Thanks for coming!';
+  String _wmStyle = 'banner';
 
   String? get workDir => _workDir;
   String get watermark => _watermark;
@@ -29,6 +39,11 @@ class FotoProcessor {
     _workDir = p.getString(_kWorkDir);
     _watermark = p.getString(_kWatermark) ?? '';
     _frameColor = p.getInt(_kFrameColor) ?? 0xFFFFFFFF;
+    _couple = p.getString(_kCouple) ?? '';
+    _wmDate = p.getString(_kWmDate) ?? '';
+    _studio = p.getString(_kStudio) ?? '';
+    _thanks = p.getString(_kThanks) ?? 'Thanks for coming!';
+    _wmStyle = p.getString(_kWmStyle) ?? 'banner';
     // default: folder AmbilFile/Fotografer di storage
     if (_workDir == null) {
       final ext = await getExternalStorageDirectory();
@@ -58,6 +73,41 @@ class FotoProcessor {
     _watermark = text;
     final p = await SharedPreferences.getInstance();
     await p.setString(_kWatermark, text);
+  }
+
+  String get couple => _couple;
+  String get wmDate => _wmDate;
+  String get studio => _studio;
+  String get thanks => _thanks;
+  String get wmStyle => _wmStyle;
+
+  Future<void> setBanner(
+      {String? couple,
+      String? date,
+      String? studio,
+      String? thanks,
+      String? style}) async {
+    final p = await SharedPreferences.getInstance();
+    if (couple != null) {
+      _couple = couple;
+      await p.setString(_kCouple, couple);
+    }
+    if (date != null) {
+      _wmDate = date;
+      await p.setString(_kWmDate, date);
+    }
+    if (studio != null) {
+      _studio = studio;
+      await p.setString(_kStudio, studio);
+    }
+    if (thanks != null) {
+      _thanks = thanks;
+      await p.setString(_kThanks, thanks);
+    }
+    if (style != null) {
+      _wmStyle = style;
+      await p.setString(_kWmStyle, style);
+    }
   }
 
   String _baseName(String path) =>
@@ -97,9 +147,14 @@ class FotoProcessor {
     // 4. PUBLIK — compress + bingkai + watermark
     onStep?.call('publik');
     final pub = _addFrame(comp, 24, _frameColor);
-    final final_ = _watermark.isNotEmpty
-        ? _addWatermark(pub, _watermark)
-        : pub;
+    img.Image final_;
+    if (_wmStyle == 'banner') {
+      final_ = _addBanner(pub);
+    } else if (_watermark.isNotEmpty) {
+      final_ = _addWatermark(pub, _watermark);
+    } else {
+      final_ = pub;
+    }
     final pubPath = '$_workDir/publik/$jpgName';
     await File(pubPath)
         .writeAsBytes(img.encodeJpg(final_, quality: 85));
@@ -130,6 +185,106 @@ class FotoProcessor {
     ));
     img.compositeImage(out, src,
         dstX: border, dstY: border);
+    return out;
+  }
+
+  /// Banner watermark ala undangan: strip hijau tua di bawah,
+  /// label putih nama mempelai di tengah, thanks kiri, studio kanan.
+  img.Image _addBanner(img.Image src) {
+    final out = src.clone();
+    final W = src.width, H = src.height;
+
+    // --- strip hijau tua ---
+    final green = img.ColorRgba8(27, 94, 59, 255); // #1b5e3b
+    final cream = img.ColorRgba8(250, 247, 240, 255);
+    final bannerH = (H * 0.13).round().clamp(90, 220);
+    final by = H - bannerH;
+    img.fillRect(out, x1: 0, y1: by, x2: W - 1, y2: H - 1, color: green);
+
+    // garis tipis emas di atas banner
+    final gold = img.ColorRgba8(212, 175, 105, 255);
+    img.fillRect(out, x1: 0, y1: by, x2: W - 1, y2: by + 3, color: gold);
+
+    final fontS = img.arial14;
+    final fontM = img.arial24;
+
+    // --- teks kiri: Thanks for coming! ---
+    if (_thanks.isNotEmpty) {
+      img.drawString(out, _thanks,
+          font: fontM,
+          x: (W * 0.04).round(),
+          y: by + (bannerH ~/ 2) - 12,
+          color: cream);
+    }
+
+    // --- teks kanan: nama studio ---
+    if (_studio.isNotEmpty) {
+      final approxW = _studio.length * 12;
+      img.drawString(out, _studio,
+          font: fontM,
+          x: (W - approxW - W * 0.04).round().clamp(0, W - 10),
+          y: by + (bannerH ~/ 2) - 12,
+          color: cream);
+    }
+
+    // --- label putih tengah (model pita) ---
+    final labelW = (W * 0.44).round().clamp(200, 900);
+    final labelH = (bannerH * 1.55).round();
+    final lx = (W - labelW) ~/ 2;
+    final ly = by - ((labelH - bannerH) ~/ 2);
+    final white = img.ColorRgba8(255, 255, 255, 255);
+    final darkGreen = img.ColorRgba8(27, 94, 59, 255);
+
+    // badan label
+    img.fillRect(out,
+        x1: lx + 18, y1: ly, x2: lx + labelW - 19, y2: ly + labelH - 1,
+        color: white);
+    // ujung kiri (segitiga)
+    img.fillPolygon(out,
+        vertices: [
+          img.Point(lx + 18, ly),
+          img.Point(lx, ly + labelH ~/ 2),
+          img.Point(lx + 18, ly + labelH - 1),
+        ],
+        color: white);
+    // ujung kanan (segitiga)
+    img.fillPolygon(out,
+        vertices: [
+          img.Point(lx + labelW - 19, ly),
+          img.Point(lx + labelW - 1, ly + labelH ~/ 2),
+          img.Point(lx + labelW - 19, ly + labelH - 1),
+        ],
+        color: white);
+
+    // --- teks di label ---
+    final cx = lx + labelW ~/ 2;
+    var ty = ly + (labelH * 0.14).round();
+
+    // "The Wedding Of"
+    img.drawString(out, 'The Wedding Of',
+        font: fontS,
+        x: cx - ('The Wedding Of'.length * 7 ~/ 2),
+        y: ty,
+        color: darkGreen);
+    ty += 22;
+
+    // Nama mempelai
+    final couple = _couple.isNotEmpty ? _couple : 'Mempelai';
+    img.drawString(out, couple,
+        font: fontM,
+        x: cx - (couple.length * 12 ~/ 2).clamp(0, cx - lx - 20),
+        y: ty,
+        color: darkGreen);
+    ty += 32;
+
+    // Tanggal
+    if (_wmDate.isNotEmpty) {
+      img.drawString(out, _wmDate,
+          font: fontS,
+          x: cx - (_wmDate.length * 7 ~/ 2),
+          y: ty,
+          color: darkGreen);
+    }
     return out;
   }
 
