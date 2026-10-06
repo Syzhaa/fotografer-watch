@@ -53,6 +53,26 @@ class FotoApi {
     return d;
   }
 
+  /// Tes API key: GET /api/v1/room/xxx/link (harus 404 bukan 401)
+  /// Return null jika OK, pesan error jika gagal.
+  Future<String?> testConnection() async {
+    if (!hasApiKey) return 'API key belum diisi';
+    try {
+      await _dio.get('/api/v1/room/__test__/link', options: _auth);
+      return null; // 200 (tidak mungkin)
+    } on DioException catch (e) {
+      final code = e.response?.statusCode;
+      if (code == 404) return null; // key valid, room tidak ada = OK
+      if (code == 401) {
+        final msg = (e.response?.data is Map)
+            ? (e.response!.data['error']?.toString() ?? '')
+            : '';
+        return 'API key ditolak server${msg.isNotEmpty ? ': $msg' : ''}';
+      }
+      return apiError(e);
+    }
+  }
+
   /// GET /api/v1/room/{id}/link → share link
   Future<String> roomLink(String roomId) async {
     final r = await _dio.get('/api/v1/room/$roomId/link', options: _auth);
@@ -95,6 +115,7 @@ class FotoApi {
           await _dio.post('/api/upload/$roomId',
               data: form,
               options: Options(
+                headers: {'Authorization': 'Bearer $_apiKey'},
                 sendTimeout: const Duration(minutes: 5),
                 receiveTimeout: const Duration(minutes: 2),
               ));

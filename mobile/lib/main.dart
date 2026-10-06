@@ -924,6 +924,32 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   style: TextStyle(color: Colors.white)),
             ),
           ),
+          const SizedBox(height: 8),
+          SizedBox(
+            height: 44,
+            child: OutlinedButton.icon(
+              style: OutlinedButton.styleFrom(
+                  shape: RoundedRectangleBorder(
+                      borderRadius:
+                          BorderRadius.circular(10))),
+              onPressed: () async {
+                final err =
+                    await FotoApi.instance.testConnection();
+                if (!mounted) return;
+                ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                  content: Text(err == null
+                      ? 'Koneksi OK! API key valid ✅'
+                      : 'Gagal: $err'),
+                  backgroundColor: err == null
+                      ? Colors.green
+                      : Colors.red,
+                ));
+              },
+              icon: const Icon(Icons.wifi_find, size: 18),
+              label: const Text('Tes Koneksi'),
+            ),
+          ),
           const SizedBox(height: 20),
           const Text('Watermark Banner',
               style:
